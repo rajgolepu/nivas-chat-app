@@ -1,0 +1,16 @@
+{
+  "name": "nivas-chat-app",
+  "version": "1.0.0",
+  "description": "Real-time chat app built for Nivas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "Nivas & Raj",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.0",
+    "socket.io": "^4.7.5"
+  }
+}
