@@ -11,39 +11,26 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Store messages in memory (last 100)
 const messages = [];
 const MAX_MESSAGES = 100;
-
-// Track connected users
 const users = new Map();
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
-
-  // Send existing messages to new user
   socket.emit('load_messages', messages);
 
-  // Handle new message
   socket.on('send_message', (data) => {
     const message = {
       id: Date.now(),
       username: data.username || 'Anonymous',
       text: data.text,
-      timestamp: new Date().toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      })
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     };
-    
     messages.push(message);
     if (messages.length > MAX_MESSAGES) messages.shift();
-    
-    // Broadcast to all users
     io.emit('receive_message', message);
   });
 
-  // Track user join
   socket.on('user_join', (username) => {
     users.set(socket.id, username);
     io.emit('users_update', Array.from(users.values()));
@@ -55,7 +42,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Typing indicator
   socket.on('typing', (username) => {
     socket.broadcast.emit('user_typing', username);
   });
@@ -66,56 +52,76 @@ io.on('connection', (socket) => {
 
   // ===== VIDEO CALL SIGNALING =====
   
-  // When a user wants to start a call
-  socket.on('call_initiate', (data) => {
-    // Broadcast to all other users that a call is starting
-    socket.broadcast.emit('call_incoming', {
-      from: socket.id,
+  // Join a call room
+  socket.on('join_call', (data) => {
+    const rooms = io.sockets.adapter.rooms;
+    const callRoom = rooms.get('video_call');
+    const othersInCall = callRoom ? [...callRoom] : [];
+    
+    socket.join('video_call');
+    users.set(socket.id, data.username);
+    
+    // Tell the new user about existing participants
+    socket.emit('call_participants', othersInCall);
+    
+    // Tell others someone joined
+    socket.to('video_call').emit('call_peer_joined', {
+      peerId: socket.id,
       username: data.username
+    });
+    
+    io.emit('receive_message', {
+      id: Date.now(),
+      username: 'System',
+      text: '📞 ' + data.username + ' joined the video call!',
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     });
   });
 
-  // When a user joins an existing call
-  socket.on('call_join', (data) => {
-    socket.broadcast.emit('call_user_joined', {
-      from: socket.id,
-      username: data.username
-    });
-  });
-
-  // WebRTC signaling: offer
-  socket.on('call_offer', (data) => {
-    io.to(data.to).emit('call_offer', {
+  // WebRTC: Send offer to specific peer
+  socket.on('offer', (data) => {
+    io.to(data.to).emit('offer', {
       from: socket.id,
       offer: data.offer
     });
   });
 
-  // WebRTC signaling: answer
-  socket.on('call_answer', (data) => {
-    io.to(data.to).emit('call_answer', {
+  // WebRTC: Send answer to specific peer
+  socket.on('answer', (data) => {
+    io.to(data.to).emit('answer', {
       from: socket.id,
       answer: data.answer
     });
   });
 
-  // WebRTC signaling: ICE candidate
-  socket.on('call_ice_candidate', (data) => {
-    io.to(data.to).emit('call_ice_candidate', {
+  // WebRTC: Send ICE candidate to specific peer
+  socket.on('ice_candidate', (data) => {
+    io.to(data.to).emit('ice_candidate', {
       from: socket.id,
       candidate: data.candidate
     });
   });
 
-  // End call
-  socket.on('call_end', () => {
-    socket.broadcast.emit('call_ended', { from: socket.id });
+  // Leave call
+  socket.on('leave_call', () => {
+    socket.leave('video_call');
+    socket.to('video_call').emit('call_peer_left', {
+      peerId: socket.id,
+      username: users.get(socket.id) || 'Unknown'
+    });
   });
 
   socket.on('disconnect', () => {
     const username = users.get(socket.id);
     users.delete(socket.id);
     io.emit('users_update', Array.from(users.values()));
+    
+    // Notify call participants
+    socket.to('video_call').emit('call_peer_left', {
+      peerId: socket.id,
+      username: username || 'Unknown'
+    });
+    
     if (username) {
       io.emit('receive_message', {
         id: Date.now(),
@@ -124,7 +130,6 @@ io.on('connection', (socket) => {
         timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
       });
     }
-    io.emit('call_ended', { from: socket.id });
     console.log('User disconnected:', socket.id);
   });
 });
